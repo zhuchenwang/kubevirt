@@ -132,7 +132,7 @@ func roundTripperFromConfig(config *rest.Config, callback RoundTripCallback) (ht
 	return rest.HTTPWrappersForConfig(config, rt)
 }
 
-func RequestFromConfig(config *rest.Config, resource, name, namespace, subresource string) (*http.Request, error) {
+func RequestFromConfig(config *rest.Config, resource, name, namespace, subresource string, params ...string) (*http.Request, error) {
 
 	u, err := url.Parse(config.Host)
 	if err != nil {
@@ -152,6 +152,7 @@ func RequestFromConfig(config *rest.Config, resource, name, namespace, subresour
 		u.Path,
 		fmt.Sprintf("/apis/subresources.kubevirt.io/%s/namespaces/%s/%s/%s/%s", v1.ApiStorageVersion, namespace, resource, name, subresource),
 	)
+	u.RawQuery = strings.Join(params, "&")
 	req := &http.Request{
 		Method: http.MethodGet,
 		URL:    u,
@@ -489,4 +490,12 @@ func (v *vmis) RemoveVolume(name string, removeVolumeOptions *v1.RemoveVolumeOpt
 	}
 
 	return v.restClient.Put().AbsPath(uri).Body([]byte(JSON)).Do(context.Background()).Error()
+}
+
+func (v *vmis) VSOCK(name string, options *v1.VSOCKOptions) (StreamInterface, error) {
+	if options == nil || options.TargetPort == 0 {
+		return nil, fmt.Errorf("target port is required but not provided")
+	}
+
+	return asyncSubresourceHelper(v.config, v.resource, v.namespace, name, "vsock", fmt.Sprintf("port=%d", options.TargetPort))
 }

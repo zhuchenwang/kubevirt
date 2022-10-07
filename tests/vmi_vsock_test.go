@@ -21,12 +21,16 @@ package tests_test
 
 import (
 	"encoding/xml"
+	"net"
+	"time"
 
 	expect "github.com/google/goexpect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	k8sv1 "k8s.io/api/core/v1"
 	"k8s.io/utils/pointer"
+
+	v1 "kubevirt.io/api/core/v1"
 
 	virtconfig "kubevirt.io/kubevirt/pkg/virt-config"
 	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/api"
@@ -145,6 +149,77 @@ var _ = Describe("[Serial][sig-compute]VSOCK", func() {
 			Expect(xml.Unmarshal([]byte(domain2), domSpec2)).To(Succeed())
 			Expect(domSpec2.Devices.VSOCK.CID.Auto).To(Equal("no"))
 			Expect(domSpec2.Devices.VSOCK.CID.Address).To(Equal(*vmi2.Status.VSOCKCID))
+		})
+	})
+
+	Context("API access", func() {
+		It("should communicate with VMI via VSOCK", func() {
+			virtClient, err := kubecli.GetKubevirtClient()
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Creating a VMI with VSOCK enabled")
+			vmi := tests.NewRandomFedoraVMI()
+			vmi.Spec.Domain.Devices.AutoattachVSOCK = pointer.Bool(true)
+			vmi = tests.RunVMIAndExpectLaunch(vmi, 60)
+
+			By("Logging in as root")
+			err = console.LoginToFedora(vmi)
+			Expect(err).ToNot(HaveOccurred())
+
+			By("Starting a server on guest via VSOCK")
+			port := 8888
+			tests.StartPythonVsockServer(vmi, *vmi.Status.VSOCKCID, port)
+
+			By("Connect to the guest via API")
+			cliConn, svrConn := net.Pipe()
+			stopChan := make(chan error)
+			respChan := make(chan string)
+			go func() {
+				defer GinkgoRecover()
+				vsock, err := virtClient.VirtualMachineInstance(vmi.Namespace).VSOCK(vmi.Name, &v1.VSOCKOptions{TargetPort: uint32(port)})
+				if err != nil {
+					stopChan <- err
+				}
+				stopChan <- vsock.Stream(kubecli.StreamOptions{
+					In:  svrConn,
+					Out: svrConn,
+				})
+			}()
+			By("Writing to the Guest")
+			message := "Hello World!"
+			go func() {
+				defer GinkgoRecover()
+				message := "Hello World!"
+				_, err = cliConn.Write([]byte(message))
+				Expect(err).NotTo(HaveOccurred())
+			}()
+
+			By("Reading from the Guest")
+			go func() {
+				defer GinkgoRecover()
+				buf := make([]byte, 1024, 1024)
+				// reading qemu vnc server
+				n, err := cliConn.Read(buf)
+				Expect(err).NotTo(HaveOccurred())
+				respChan <- string(buf[0:n])
+			}()
+
+			select {
+			case resp := <-respChan:
+				Expect(resp).To(Equal(message))
+			case <-time.After(1 * time.Minute):
+				Fail("Timout communicate with the Vsock server in Guest.")
+			}
+
+			By("Close the stream")
+			err = cliConn.Close()
+			Expect(err).NotTo(HaveOccurred())
+			select {
+			case err := <-stopChan:
+				Expect(err).NotTo(HaveOccurred())
+			case <-time.After(1 * time.Minute):
+				Fail("Timout closing the stream")
+			}
 		})
 	})
 })

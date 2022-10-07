@@ -844,6 +844,7 @@ spec:
           - virtualmachineinstances/console
           - virtualmachineinstances/vnc
           - virtualmachineinstances/vnc/screenshot
+          - virtualmachineinstances/vsock
           - virtualmachineinstances/guestosinfo
           - virtualmachineinstances/filesystemlist
           - virtualmachineinstances/userlist
@@ -949,6 +950,7 @@ spec:
           - virtualmachineinstances/console
           - virtualmachineinstances/vnc
           - virtualmachineinstances/vnc/screenshot
+          - virtualmachineinstances/vsock
           - virtualmachineinstances/guestosinfo
           - virtualmachineinstances/filesystemlist
           - virtualmachineinstances/userlist
